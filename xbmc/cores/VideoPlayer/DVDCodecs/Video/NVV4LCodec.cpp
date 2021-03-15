@@ -73,13 +73,13 @@ NVV4LCodec::~NVV4LCodec()
 
 bool NVV4LCodec::OpenDevice()
 {
-  CLog::Log(LOGINFO, "NVV4LCodec::Open opening device %s", m_dec_dev);
+  CLog::Log(LOGINFO, "NVV4LCodec::OpenDevice opening device %s", m_dec_dev);
 
   device_fd = v4l2_open(m_dec_dev, O_RDWR | O_NONBLOCK);
  
   if (device_fd < 0)
   {
-    CLog::Log(LOGERROR, "NVV4LCodec::Open v4l2 device open failed");
+    CLog::Log(LOGERROR, "NVV4LCodec::OpenDevice v4l2 device open failed");
     return false;
   }
 
@@ -87,13 +87,13 @@ bool NVV4LCodec::OpenDevice()
 
   if (v4l2_ioctl(device_fd, VIDIOC_QUERYCAP, &caps) < 0)
   {
-    CLog::Log(LOGERROR, "NVV4LCodec::Open video capabilities query failed");
+    CLog::Log(LOGERROR, "NVV4LCodec::OpenDevice video capabilities query failed");
     return false;
   }
 
   if (!(caps.capabilities & V4L2_CAP_VIDEO_M2M_MPLANE))
   {
-    CLog::Log(LOGERROR, "NVV4LCodec::Open video capability M2M not supported");
+    CLog::Log(LOGERROR, "NVV4LCodec::OpenDevice video capability M2M not supported");
     return false;
   }
 
@@ -109,12 +109,12 @@ bool NVV4LCodec::OpenDevice()
 
   if (!m_pool_output->Init(output_format, INPUT_BUFFERS)) 
   {
-    CLog::Log(LOGERROR, "NVV4LCodec::Open filed to initalize buffer pool");
+    CLog::Log(LOGERROR, "NVV4LCodec::OpenDevice filed to initalize buffer pool");
     return false;
   }
 
 
-  CLog::Log(LOGINFO, "NVV4LCodec::Open device ready");
+  CLog::Log(LOGINFO, "NVV4LCodec::OpenDevice device ready");
 
   return true;
 };
@@ -453,7 +453,7 @@ void NVV4LCodec::HandleEvent()
   {
     if (ev.type == V4L2_EVENT_RESOLUTION_CHANGE)
     {
-      CLog::Log(LOGINFO, "NVV4LCodec::DecoderLoop resolution change received");
+      CLog::Log(LOGINFO, "NVV4LCodec::HandleEvent resolution change received");
 
       size_t min_buffers;
 
@@ -462,7 +462,7 @@ void NVV4LCodec::HandleEvent()
 
       if (v4l2_ioctl(device_fd, VIDIOC_G_CTRL, &ctl) < 0)
       {
-        CLog::Log(LOGERROR, "NVV4LCodec::DecoderLoop getting min_buffers failed");
+        CLog::Log(LOGERROR, "NVV4LCodec::HandleEvent getting min_buffers failed");
       }
 
       min_buffers = ctl.value;
@@ -482,15 +482,15 @@ void NVV4LCodec::HandleEvent()
         if ( buffer->Enqueue() )
         {
           if (VERBOSE && CServiceBroker::GetLogging().CanLogComponent(LOGVIDEO))
-            CLog::Log(LOGDEBUG, "NVV4LCodec::DecoderLoop capture plane enqueued buffer id:%d",
+            CLog::Log(LOGDEBUG, "NVV4LCodec::HandleEvent capture plane enqueued buffer id:%d",
                       buffer->GetId());
         } else {
-            CLog::Log(LOGERROR, "NVV4LCodec::DecoderLoop capture plane failed to enqueued buffer id:%d",
+            CLog::Log(LOGERROR, "NVV4LCodec::HandleEvent capture plane failed to enqueued buffer id:%d",
                       buffer->GetId());
         }
       }
 
-      CLog::Log(LOGINFO, "NVV4LCodec::DecoderLoop capture plane initalized");
+      CLog::Log(LOGINFO, "NVV4LCodec::HandleEvent capture plane initalized");
       m_is_capturing.store(true, std::memory_order_relaxed);
   
       
@@ -508,7 +508,7 @@ void NVV4LCodec::HandleOutputPool()
   {
     buffer->Release();
     if (VERBOSE && CServiceBroker::GetLogging().CanLogComponent(LOGVIDEO))
-      CLog::Log(LOGDEBUG, "NVV4LCodec::DecoderLoop dequed output buffer id:%d, pts:%d", buffer->GetId(), buffer->GetPts());
+      CLog::Log(LOGDEBUG, "NVV4LCodec::HandleOutputPool dequeued output buffer id:%d, pts:%d", buffer->GetId(), buffer->GetPts());
   }
 };
 
@@ -521,7 +521,7 @@ void NVV4LCodec::HandleCapturePool()
       m_pool_capture->Ready(buffer->GetId());
 
       if (VERBOSE && CServiceBroker::GetLogging().CanLogComponent(LOGVIDEO))
-        CLog::Log(LOGDEBUG, "NVV4LCodec::DecoderLoop dequed capture buffer id:%d, pts:%d",
+        CLog::Log(LOGDEBUG, "NVV4LCodec::HandleCapturePool dequeued capture buffer id:%d, pts:%d",
                   buffer->GetId(), buffer->GetPts());
     }
   }
@@ -536,10 +536,10 @@ void NVV4LCodec::DispatchCapture()
     {
       if (buffer->Enqueue()) {
         if (VERBOSE && CServiceBroker::GetLogging().CanLogComponent(LOGVIDEO))
-          CLog::Log(LOGDEBUG, "NVV4LCodec::DecoderLoop enqueued capture buffer id:%d",
+          CLog::Log(LOGDEBUG, "NVV4LCodec::DispatchCapture enqueued capture buffer id:%d",
                     buffer->GetId());
       } else {
-        CLog::Log(LOGERROR, "NVV4LCodec::DecoderLoop failed to enqueued capture buffer id:%d", buffer->GetId());
+        CLog::Log(LOGERROR, "NVV4LCodec::DispatchCapture failed to enqueued capture buffer id:%d", buffer->GetId());
         buffer->Release();
         break;
       }
@@ -555,10 +555,10 @@ void NVV4LCodec::DispatchOutput()
     if (buffer->Enqueue()) {
       m_pool_output->GetReadyBuffer();
       if (VERBOSE && CServiceBroker::GetLogging().CanLogComponent(LOGVIDEO))
-        CLog::Log(LOGDEBUG, "NVV4LCodec::DecoderLoop enqueued output buffer id:%d, pts:%d",
+        CLog::Log(LOGDEBUG, "NVV4LCodec::DispatchOutput enqueued output buffer id:%d, pts:%d",
                   buffer->GetId(), buffer->GetPts());
     } else {
-      CLog::Log(LOGWARNING, "NVV4LCodec::DecoderLoop failed enqueue output buffer id:%d, pts:%d", buffer->GetId(), buffer->GetPts());
+      CLog::Log(LOGWARNING, "NVV4LCodec::DispatchOutput failed enqueue output buffer id:%d, pts:%d", buffer->GetId(), buffer->GetPts());
       break;
     }
   }
@@ -609,7 +609,7 @@ bool NVV4LCodec::StreamOff(uint32_t type)
 {
   if (v4l2_ioctl(device_fd, VIDIOC_STREAMOFF, &type) < 0)
   {
-      CLog::Log(LOGINFO, "NVV4LCodec::StreamON failed to stop stream: %s", strerror(errno));
+      CLog::Log(LOGINFO, "NVV4LCodec::StreamOff failed to stop stream: %s", strerror(errno));
   }
 
   return true;
@@ -643,7 +643,7 @@ bool CNVV4LBufferPool::Init(struct v4l2_format format, size_t size)
   if (m_type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
     if (v4l2_ioctl(m_fd, VIDIOC_S_FMT, &m_format) < 0) 
     {
-      CLog::Log(LOGERROR, "CNVV4LBuffer::Query query buffer failed %s", strerror(errno));
+      CLog::Log(LOGERROR, "CNVV4LBuffer::Init query buffer failed %s", strerror(errno));
       return false;
     }
   }
