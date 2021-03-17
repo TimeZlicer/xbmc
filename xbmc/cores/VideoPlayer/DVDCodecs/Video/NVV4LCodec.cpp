@@ -243,9 +243,6 @@ bool NVV4LCodec::Open(CDVDStreamInfo &hints, CDVDCodecOptions &options)
 
   m_is_open.store(true, std::memory_order_relaxed);
 
-  // start decoder thread
-  // m_decoder_thread = std::thread(&NVV4LCodec::DecoderLoop, this);
-
 
   return true;
 };
@@ -398,53 +395,6 @@ CDVDVideoCodec::VCReturn NVV4LCodec::GetPicture(VideoPicture* pVideoPicture)
 };
 
 
-void NVV4LCodec::DecoderLoop() 
-{
-
-  while (m_is_open.load(std::memory_order_relaxed))
-  {
-
-    while (!m_preroll.load(std::memory_order_relaxed) && m_pool_output->WaitForFullPool(100)) 
-    {
-
-      if (!m_eos.load(std::memory_order_relaxed))
-        DispatchCapture();
-
-      EnableInterrupt();
-
-      struct v4l2_ext_control control;
-      struct v4l2_ext_controls ctrls;
-      v4l2_ctrl_video_device_poll devicepoll;
-    
-      memset(&control, 0, sizeof(struct v4l2_ext_control));
-      memset(&ctrls, 0, sizeof(struct v4l2_ext_controls));
-      memset(&devicepoll, 0, sizeof(v4l2_ctrl_video_device_poll));
-      devicepoll.req_events = POLLIN | POLLOUT | POLLERR | POLLPRI;
-      devicepoll.resp_events = 0;
-
-      ctrls.count = 1;
-      ctrls.controls = &control;
-
-      control.id = V4L2_CID_MPEG_VIDEO_DEVICE_POLL;
-      control.string = (char*)&devicepoll;
-
-      // thread will block here and wait for IO or Interrupt
-      v4l2_ioctl(device_fd, VIDIOC_S_EXT_CTRLS, &ctrls);
-
-      HandleEvent();
-
-      HandleOutputPool();
-
-      HandleCapturePool();
-
-      DisabeInterrupt();
-    }
-
-  }
-
-  CLog::Log(LOGINFO, "NVV4LCodec::DecoderLoop thread stopped");
-}
-
 void NVV4LCodec::HandleEvent()
 {
   struct v4l2_event ev;
@@ -502,32 +452,6 @@ void NVV4LCodec::HandleEvent()
 };
 
 
-void NVV4LCodec::HandleOutputPool() 
-{
-  for (CNVV4LBuffer* buffer = m_pool_output->DequeueBuffer(); buffer != nullptr; buffer = m_pool_output->DequeueBuffer())
-  {
-    buffer->Release();
-    if (VERBOSE && CServiceBroker::GetLogging().CanLogComponent(LOGVIDEO))
-      CLog::Log(LOGDEBUG, "NVV4LCodec::HandleOutputPool dequeued output buffer id:%d, pts:%d", buffer->GetId(), buffer->GetPts());
-  }
-};
-
-void NVV4LCodec::HandleCapturePool() 
-{
-  if (m_is_capturing.load(std::memory_order_relaxed))
-  {
-    for (CNVV4LBuffer *buffer = m_pool_capture->DequeueBuffer(); buffer != nullptr; buffer = m_pool_capture->DequeueBuffer())
-    {
-      m_pool_capture->Ready(buffer->GetId());
-
-      if (VERBOSE && CServiceBroker::GetLogging().CanLogComponent(LOGVIDEO))
-        CLog::Log(LOGDEBUG, "NVV4LCodec::HandleCapturePool dequeued capture buffer id:%d, pts:%d",
-                  buffer->GetId(), buffer->GetPts());
-    }
-  }
-};
-
-
 void NVV4LCodec::DispatchCapture() 
 {
   if (m_is_capturing.load(std::memory_order_relaxed))
@@ -547,53 +471,6 @@ void NVV4LCodec::DispatchCapture()
   }
 };
 
-void NVV4LCodec::DispatchOutput() 
-{
-
-  for (CNVV4LBuffer* buffer = m_pool_output->PeekReadyBuffer(); buffer != nullptr; buffer = m_pool_output->PeekReadyBuffer())
-  {
-    if (buffer->Enqueue()) {
-      m_pool_output->GetReadyBuffer();
-      if (VERBOSE && CServiceBroker::GetLogging().CanLogComponent(LOGVIDEO))
-        CLog::Log(LOGDEBUG, "NVV4LCodec::DispatchOutput enqueued output buffer id:%d, pts:%d",
-                  buffer->GetId(), buffer->GetPts());
-    } else {
-      CLog::Log(LOGWARNING, "NVV4LCodec::DispatchOutput failed enqueue output buffer id:%d, pts:%d", buffer->GetId(), buffer->GetPts());
-      break;
-    }
-  }
-};
-
-static bool SetIterrupt(const int device_fd, const int value) {
-  struct v4l2_ext_control control;
-  struct v4l2_ext_controls ctrls;
-
-  memset(&control, 0, sizeof(struct v4l2_ext_control));
-  memset(&ctrls, 0, sizeof(struct v4l2_ext_controls));
-  
-  ctrls.count = 1;
-  ctrls.controls = &control;
-
-  control.id = V4L2_CID_MPEG_SET_POLL_INTERRUPT;
-  control.value = value;
-
-  int ret = v4l2_ioctl(device_fd, VIDIOC_S_EXT_CTRLS, &ctrls);
-
-  return ret == 0;
-}
-
-void NVV4LCodec::EnableInterrupt()
-{
-  if (!SetIterrupt(device_fd, 1))
-    CLog::Log(LOGINFO, "NVV4LCodec::EnableInterrupt failed: %s", strerror(errno));
-};
-
-
-void NVV4LCodec::DisabeInterrupt()
-{
-  if (!SetIterrupt(device_fd, 0))
-    CLog::Log(LOGINFO, "NVV4LCodec::DisableInterrupt failed: %s", strerror(errno));
-};
 
 bool NVV4LCodec::StreamOn(uint32_t type)
 {
@@ -711,9 +588,6 @@ CNVV4LBuffer* CNVV4LBufferPool::GetBuffer()
 
     lock.unlock();
 
-    if (m_free.empty())
-      m_pool_wait_full.notify_one();
-
     return buffer;
   }
   else
@@ -723,13 +597,10 @@ CNVV4LBuffer* CNVV4LBufferPool::GetBuffer()
 void CNVV4LBufferPool::Return(int id) 
 {
   std::unique_lock<std::mutex> lock(m_pool_mutex);
-  bool returned = false;
 
   for (auto it = std::begin(m_used); it < std::end(m_used); it++) {
     if (*it == id)
     {
-      returned = true;
-
       m_used.erase(it);
       m_free.push_back(id);
       break;
@@ -737,9 +608,6 @@ void CNVV4LBufferPool::Return(int id)
   }
 
   lock.unlock();
-
-  if (returned)
-    m_pool_wait_free.notify_one();
 }
 
 
@@ -765,91 +633,6 @@ CNVV4LBuffer* CNVV4LBufferPool::DequeueBuffer()
 };
 
 
-CNVV4LBuffer* CNVV4LBufferPool::PeekReadyBuffer()
-{
-  if (m_ready.empty())
-    return nullptr;
-
-  const std::lock_guard<std::mutex> lock(m_pool_mutex);
-  if (! m_ready.empty()) {
-    return m_bufs[m_ready.front()];
-  }
-
-  return nullptr;
-}
-
-CNVV4LBuffer* CNVV4LBufferPool::GetReadyBuffer()
-{
-  if (m_ready.empty())
-    return nullptr;
-
-  const std::lock_guard<std::mutex> lock(m_pool_mutex);
-  if (! m_ready.empty()) {
-    CNVV4LBuffer *buffer = m_bufs[m_ready.front()];
-    m_ready.pop();
-    
-    buffer->Acquire(GetPtr());
-
-    return buffer;
-  }
-
-  return nullptr;
-
-}
-
-void CNVV4LBufferPool::Ready(int id)
-{
-  std::unique_lock<std::mutex> lock(m_pool_mutex);
-
-  m_ready.push(id);
-  m_free.erase(std::remove(m_free.begin(), m_free.end(), id), m_free.end());
-  m_used.push_back(id);
-
-  lock.unlock();
-
-  m_pool_wait_ready.notify_one();
-}
-
-bool CNVV4LBufferPool::WaitForFreeBuffer(int timeout) 
-{
-  if (HasFreeBuffers())
-    return true;
-
-  std::unique_lock<std::mutex> lock(m_pool_mutex);
-
-  return m_pool_wait_free.wait_for(lock, std::chrono::milliseconds(timeout), [this] { return this->HasFreeBuffers(); });
-};
-
-bool CNVV4LBufferPool::WaitForReadyBuffer(int timeout) 
-{
-  if (HasReadyBuffers())
-    return true;
-
-  std::unique_lock<std::mutex> lock(m_pool_mutex);
-
-  return m_pool_wait_ready.wait_for(lock, std::chrono::milliseconds(timeout), [this] { return this->HasReadyBuffers(); });
-}
-
-bool CNVV4LBufferPool::WaitForFullPool(int timeout)
-{
-  if (!HasFreeBuffers())
-    return true;
-
-  std::unique_lock<std::mutex> lock(m_pool_mutex);
-
-  return m_pool_wait_full.wait_for(lock, std::chrono::milliseconds(timeout), [this] { return !this->HasFreeBuffers(); });
-};
-
-bool CNVV4LBufferPool::WaitForEmptyPool(int timeout)
-{
-  if (FreeCount() == GetSize())
-    return true;
-
-  std::unique_lock<std::mutex> lock(m_pool_mutex);
-
-  return m_pool_wait_free.wait_for(lock, std::chrono::milliseconds(timeout), [this] { return FreeCount() == GetSize(); });
-};
-
 void CNVV4LBufferPool::Reset() {
   Dispose();
 
@@ -867,7 +650,6 @@ void CNVV4LBufferPool::Dispose()
   const std::lock_guard<std::mutex> lock(m_pool_mutex);
 
   clear(m_free);
-  clear(m_ready);
   clear(m_used);
 
   for (auto buffer : m_bufs) {
@@ -1099,26 +881,4 @@ AVPixelFormat CNVV4LBuffer::GetFormat()
   // AV_PIX_FMT_NV12. As it is v4l2_m2m format, will use CUDA for now
 
   return AV_PIX_FMT_CUDA;
-};
-
-
-AVColorSpace KODI::NVV4L::mapColorSpace(const struct v4l2_format &format)
-{
-  switch (format.fmt.pix_mp.colorspace) {
-    case V4L2_COLORSPACE_SMPTE170M:
-      return AVCOL_SPC_SMPTE170M;
-
-    case V4L2_COLORSPACE_BT2020:
-      return AVCOL_SPC_BT2020_CL;
-
-    case V4L2_COLORSPACE_SMPTE240M:
-      return AVCOL_SPC_SMPTE240M;
-
-    case V4L2_COLORSPACE_BT878:
-      return AVCOL_SPC_BT709;
-
-    default:
-      return AVCOL_SPC_UNSPECIFIED;
-  }
-          
 };

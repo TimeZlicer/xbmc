@@ -92,16 +92,9 @@ private:
   bool StreamOn(uint32_t type);
   bool StreamOff(uint32_t type);
 
-  void DecoderLoop();
   void HandleEvent();
-  void HandleOutputPool();
-  void HandleCapturePool();
 
-  void DispatchOutput();
   void DispatchCapture();
-
-  void EnableInterrupt();
-  void DisabeInterrupt();
 };
 
 
@@ -179,26 +172,11 @@ public:
   CVideoBuffer* Get() override { return GetBuffer(); };
   CNVV4LBuffer* GetBuffer();
 
-  CNVV4LBuffer* PeekReadyBuffer();
-  CNVV4LBuffer* GetReadyBuffer();
-
   CNVV4LBuffer* DequeueBuffer();
 
-  void Ready(int id);
   void Return(int id) override;
 
   bool HasFreeBuffers() { return !m_free.empty(); };
-  bool HasReadyBuffers() { return !m_ready.empty(); };
-
-  const size_t GetSize() { return m_size; };
-  const size_t ReadyCount() { return m_ready.size(); }; 
-  const size_t FreeCount() { return m_free.size(); }; 
-  const size_t UsedCount() { return m_used.size(); }; 
-
-  bool WaitForFreeBuffer(int timeout);
-  bool WaitForReadyBuffer(int timeout);
-  bool WaitForFullPool(int timeout);
-  bool WaitForEmptyPool(int timeout);
 
 private:
   int m_fd{0};
@@ -208,19 +186,12 @@ private:
   struct v4l2_format m_format;
 
   std::mutex m_pool_mutex;
-  std::condition_variable m_pool_wait_free;
-  std::condition_variable m_pool_wait_ready;
-  std::condition_variable m_pool_wait_full;
   
   std::vector<CNVV4LBuffer*> m_bufs;
 
   std::vector<int> m_free;
   std::vector<int> m_used;
-  std::queue<int> m_ready;
 };
-
-
-AVColorSpace mapColorSpace(const struct v4l2_format &format);
 
 }; // namespace NVV4L
 }; // namespace KODI
